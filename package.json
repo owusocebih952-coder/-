@@ -12,6 +12,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "openai": "^4.104.0",
     "ws": "^8.20.0"
   }
 }
