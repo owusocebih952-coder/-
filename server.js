@@ -4,15 +4,15 @@ const { OpenAI } = require('openai');
 const PORT = process.env.PORT || 8080; 
 const wss = new WebSocket.Server({ port: PORT });
 
-// 【修改点1】：这里已经换成了智谱的 API 地址
+// 【修改点 1】：全面切换回 DeepSeek 核心接口
 const aiClient = new OpenAI({
-    baseURL: 'https://open.bigmodel.cn/api/paas/v4/', 
+    baseURL: 'https://api.deepseek.com', // DeepSeek 官方 API 地址
     apiKey: process.env.AI_API_KEY 
 });
 
 console.log('=========================================');
 console.log('🏫 智能教师端 WebSocket 服务器已升级并启动！');
-console.log(`📡 正在监听 ${PORT} 端口，接入智谱大模型...`);
+console.log(`📡 正在监听 ${PORT} 端口，已接入 DeepSeek 深度诊断引擎...`);
 console.log('=========================================\n');
 
 wss.on('connection', function connection(ws) {
@@ -23,37 +23,57 @@ wss.on('connection', function connection(ws) {
             const data = JSON.parse(msgString);
             
             if (data.action === 'request_ai_diagnosis') {
-                console.log('🧠 收到大屏请求，正在调用智谱 GLM-4 生成学情诊断...');
+                console.log('🧠 收到深度诊断请求，正在让 DeepSeek 分析多维数据...');
                 const classData = data.currentData;
                 
                 let total = 0;
-                let struggling = [];
-                let fast = [];
+                let studentDetails = "";
 
+                // 【核心优化】：将多维打点数据全部“序列化”，提供给 AI 进行细粒度分析
                 for (const [name, info] of Object.entries(classData)) {
                     total++;
-                    if (info.errors >= 3) struggling.push(name);
-                    if (info.level >= 15) fast.push(name);
+                    studentDetails += `- ${name}: 进度[关卡${info.level + 1}], 累计错误[${info.errors}次], 本关初判[${info.currentFirstTry}], 动手验证[${info.currentSlider}]\n`;
                 }
 
+                if (total === 0) {
+                    ws.send(JSON.stringify({ action: 'ai_diagnosis_result', content: "当前暂无学生接入，请等待学生上线。" }));
+                    return;
+                }
+
+                // 【修改点 2】：极具深度的 Prompt 设计，针对性剖析学生行为特征
                 const prompt = `
-                你是一位资深小学数学教研员。全班 ${total} 名学生正在使用平板探究正方体展开图。
-                当前学情快照：
-                - 空间折叠频繁试错（首误>=3次）学生：${struggling.length > 0 ? struggling.length + '人 (' + struggling.join(', ') + ')' : '无'}。
-                - 进度极快（到达第15关以上）学生：${fast.length > 0 ? fast.length + '人' : '无'}。
-                请结合上述数据，为正在使用大屏授课的教师提供一句（不超过40字）的实时课堂巡视与干预建议。
-                要求：直接给出具体的操作建议，不需要分析过程。体现“玩中学”和“引导探究”的理念。
+                你是一位极具经验的小学数学教研员，倡导“探究式学习”。当前有 ${total} 名学生正在使用平板探究“正方体展开图”。
+                我们采集了每位学生的细粒度行为数据，包括进度、累计错误、本关的初步空间想象判断，以及【是否动手拖动了 3D 折叠滑块进行空间验证】。
+
+                【全班实时行为快照】
+                ${studentDetails}
+
+                【诊断任务】
+                请你根据上述数据，进行深度的学情诊断。绝不能直接给出题目答案，而是提供具有启发性的思维支架建议。
+                请输出一份简明的实时诊断报告，包含：
+                1. 整体画像：一句话概括全班的探究节奏与主要卡点。
+                2. 精准干预（点出具体学生名字）：
+                   - “盲目试错型”预警：找出【判断错误且未拖动滑块验证】的学生，提供引导他们使用工具验证的策略。
+                   - “空间想象遇阻型”关怀：找出【使用了滑块验证但依旧判断错误或累计错误高】的学生，提供降级拆解的辅导话术。
+                   - “探究学霸型”进阶：对进度快且准确率高的学生，提供后续总结规律（如1-4-1型）的进阶挑战建议。
+
+                【输出规范】
+                直接输出诊断文本，适当使用 emoji，排版美观。不要输出 markdown 的代码块符号。
                 `;
 
                 try {
+                    // 【修改点 3】：调用 DeepSeek 强大的推理模型
                     const response = await aiClient.chat.completions.create({
-                        model: "glm-4", // 【修改点2】：这里换成了智谱的模型名称
+                        model: "deepseek-chat", 
                         messages: [{ role: "user", content: prompt }],
-                        temperature: 0.3
+                        temperature: 0.4
                     });
 
-                    const advice = response.choices[0].message.content.trim();
-                    console.log('💡 智谱诊断生成完毕:', advice);
+                    let advice = response.choices[0].message.content.trim();
+                    // 将 AI 生成的换行符转化为 HTML 的 <br> 标签，完美适配大屏的排版
+                    advice = advice.replace(/```html/g, '').replace(/```/g, '').replace(/\n/g, '<br>');
+
+                    console.log('💡 DeepSeek 深度诊断生成完毕');
 
                     ws.send(JSON.stringify({
                         action: 'ai_diagnosis_result',
@@ -61,16 +81,17 @@ wss.on('connection', function connection(ws) {
                     }));
 
                 } catch (apiError) {
-                    console.error("❌ 智谱 API 调用失败:", apiError);
+                    console.error("❌ DeepSeek API 调用失败:", apiError);
                     ws.send(JSON.stringify({
                         action: 'ai_diagnosis_result',
-                        content: "网络连接波动，建议教师按既定教案巡视指导。"
+                        content: "网络连接波动，建议教师按既定教案，优先巡视未进行动手验证的学生。"
                     }));
                 }
                 
                 return; 
             }
 
+            // ... (下方保留原有数据广播分发逻辑) ...
             const studentName = data.studentName || '未知学生';
             
             if(data.action === 'student_login') console.log(`[上线] 🟢 学生【${studentName}】已进入挑战！`);
